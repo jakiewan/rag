@@ -695,6 +695,49 @@ def step6_write_md(md_path: Path, new_content: str) -> Path:
     return out
 
 
+def step7_load_as_documents(md_path: Path, images_dir: Path) -> List[Dict[str, Any]]:
+    """
+    按 Markdown 标题（# ... ######）切分文档，产出 Document 列表。
+    对应 01-document_loader.ipynb 的 UnstructuredMarkdownLoader(mode="elements")：
+    每块结构为 {"page_content": str, "metadata": {source, heading, heading_level}}。
+    """
+    logger.info("[Step7] 按 Markdown 标题切分文档（对应 01 UnstructuredMarkdownLoader）")
+    text = md_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    heading_re = re.compile(r"^(#{1,6})\s+(.*)")
+    blocks: List[Dict[str, Any]] = []
+    cur_heading = ""
+    cur_level = 0
+    cur_lines: List[str] = []
+
+    def _flush() -> None:
+        content = "\n".join(cur_lines).strip()
+        if content or cur_heading:
+            blocks.append({
+                "page_content": content,
+                "metadata": {
+                    "source": str(md_path),
+                    "heading": cur_heading,
+                    "heading_level": cur_level,
+                    "images_dir": str(images_dir) if images_dir else "",
+                },
+            })
+
+    for line in lines:
+        m = heading_re.match(line)
+        if m:
+            _flush()
+            cur_level = len(m.group(1))
+            cur_heading = m.group(2).strip()
+            cur_lines = []
+        else:
+            cur_lines.append(line)
+    _flush()
+
+    logger.info("[Step7] 共切出 %d 个 Document", len(blocks))
+    return blocks
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -787,6 +830,16 @@ def run_pipeline(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     logger.info("[摘要] %s", summary_path)
+
+    # Step 7 —— 文档加载（对应 01 UnstructuredMarkdownLoader，按标题切 Document）
+    documents = step7_load_as_documents(out_md, images_dir)
+    documents_path = out_dir / f"{md_path.stem}_documents.json"
+    documents_path.write_text(
+        json.dumps(documents, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("[Step7] Document 列表: %s", documents_path)
+
     logger.info("===== 运行结束 =====")
     return 0
 
