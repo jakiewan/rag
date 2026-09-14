@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "RAG · 一份 PDF 的旅程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [
+      1000,
+      600
+    ],
+    "views": [
+      {
+        "id": "ingest",
+        "label": "01 文档解析",
+        "focus": [
+          "pdf",
+          "parse",
+          "read"
+        ],
+        "note": "显式传入 PDF 会运行 MinerU；已有 Markdown 可以直接进入读取。"
+      },
+      {
+        "id": "enrich",
+        "label": "02 图片增强",
+        "focus": [
+          "read",
+          "vision",
+          "upload"
+        ],
+        "note": "读取本地图片，结合上下文生成中文标题，再上传 MinIO。"
+      },
+      {
+        "id": "produce",
+        "label": "03 生成产物",
+        "focus": [
+          "upload",
+          "rewrite",
+          "split",
+          "output"
+        ],
+        "note": "替换链接、写入文件，按 Markdown 标题切分为字典列表。"
+      }
+    ]
+  },
+  "stages": [
+    {
+      "label": "输入 / 产物"
+    },
+    {
+      "label": "解析 / 切分"
+    },
+    {
+      "label": "读取 / 改写"
+    },
+    {
+      "label": "模型 / 存储"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "pdf",
+      "type": "external",
+      "label": "PDF 输入",
+      "sublabel": "--pdf / sample.pdf",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "parse",
+      "type": "backend",
+      "label": "MinerU 解析",
+      "sublabel": "mineru.py · 子进程",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "read",
+      "type": "backend",
+      "label": "读取与扫描",
+      "sublabel": "markdown.py · 图片上下文",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "vision",
+      "type": "cloud",
+      "label": "图片中文摘要",
+      "sublabel": "vision.py · MiniMax API",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "upload",
+      "type": "cloud",
+      "label": "上传图片",
+      "sublabel": "storage.py · MinIO",
+      "stage": 3,
+      "row": 2
+    },
+    {
+      "id": "rewrite",
+      "type": "backend",
+      "label": "替换与写入",
+      "sublabel": "pipeline.py · 写入文件",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "split",
+      "type": "backend",
+      "label": "按标题切分",
+      "sublabel": "markdown.py · 字典列表",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "output",
+      "type": "database",
+      "label": "文档产物",
+      "sublabel": "sample_documents.json",
+      "stage": 0,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow0",
+      "from": "pdf",
+      "to": "parse",
+      "label": "解析文件",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow1",
+      "from": "parse",
+      "to": "read",
+      "label": "MD 与图片",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow2",
+      "from": "read",
+      "to": "vision",
+      "label": "图片及上下文",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow3",
+      "from": "vision",
+      "to": "upload",
+      "label": "摘要与图片",
+      "variant": "emphasis",
+      "labelAt": [
+        745,
+        270
+      ]
+    },
+    {
+      "id": "flow4",
+      "from": "upload",
+      "to": "rewrite",
+      "label": "远端链接",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow5",
+      "from": "rewrite",
+      "to": "split",
+      "label": "新 Markdown",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow6",
+      "from": "split",
+      "to": "output",
+      "label": "文档分块",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "从这里启动",
+      "items": [
+        "python rag_mineru_pipeline.py --pdf knowledge_base/sample.pdf",
+        "入口 → parse_args() → run_pipeline()"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "真实验收 · 2026-09-14",
+      "items": [
+        "45,598 字符 · 2 张图片 · 41 个分块",
+        "模型与图片链接均 HTTP 200；动画仅演示数据流。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "当前代码边界",
+      "items": [
+        "预处理到此结束，尚无向量化、检索和问答。",
+        "外部依赖失败可能降级；无有效图片会提前结束。"
+      ]
+    }
+  ]
+}
