@@ -673,8 +673,23 @@ def run_pipeline(args: argparse.Namespace) -> int:
             md_path = default_md
             logger.info("[入口] 使用默认 MD: %s", md_path)
         else:
-            logger.error("[入口] 未指定 --md/--pdf，且默认 MD 不存在: %s", default_md)
-            return 1
+            # 默认 MD 不存在 → 自动回退到仓库自带的 sample.pdf 跑 mineru
+            default_pdf = HERE / "knowledge_base" / "sample.pdf"
+            if (default_pdf.exists()
+                    and cfg.mode == "live"
+                    and not cfg.skip_mineru):
+                logger.info(
+                    "[入口] 默认 MD 不存在，自动使用仓库自带 PDF 跑 mineru: %s",
+                    default_pdf,
+                )
+                pdf_path = default_pdf
+                md_path = step1_mineru_parse(pdf_path, out_dir, cfg)
+            else:
+                logger.error(
+                    "[入口] 未指定 --md/--pdf，且默认 MD 与默认 PDF 均不存在: %s / %s",
+                    default_md, default_pdf,
+                )
+                return 1
 
     if not md_path or not md_path.exists():
         logger.error("Markdown 文件不存在，终止。")
