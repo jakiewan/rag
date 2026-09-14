@@ -166,14 +166,33 @@ def _bootstrap_path() -> None:
     PATH 里看不到，会被脚本误判为"mineru 不可用"。
 
     探测顺序（找到的都会加入 PATH 前缀）：
-        1. 当前 conda env（$CONDA_PREFIX/bin，conda activate 后自动设）
-        2. 常见 anaconda/miniconda/miniforge 根目录下的 envs/*/bin
-        3. ~/.local/bin（pip install --user 默认位置）
+        1. sys.executable 反推当前 Python 所在的 env bin（覆盖用绝对路径
+           `/opt/anaconda3/envs/rag/bin/python` 调用而父 shell 没 activate 的场景）
+        2. 当前 conda env（$CONDA_PREFIX/bin，conda activate 后自动设）
+        3. 常见 anaconda/miniconda/miniforge 根目录下的 envs/*/bin
+        4. ~/.local/bin（pip install --user 默认位置）
     """
     candidates: List[str] = []
+
+    # 1) sys.executable 反推
+    try:
+        exe = Path(sys.executable).resolve()
+        parts = exe.parts
+        for i, p in enumerate(parts):
+            if p == "envs" and i + 2 < len(parts) and parts[i + 2] == "bin":
+                env_bin = Path(*parts[: i + 3])
+                if env_bin.is_dir():
+                    candidates.append(str(env_bin))
+                break
+    except OSError:
+        pass
+
+    # 2) CONDA_PREFIX/bin（兼容 activate 场景）
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
         candidates.append(str(Path(conda_prefix) / "bin"))
+
+    # 3) 常见 conda 根目录的所有 envs/*/bin
     for conda_root in (
         "/opt/anaconda3", "/usr/local/anaconda3",
         os.path.expanduser("~/anaconda3"),
@@ -181,11 +200,22 @@ def _bootstrap_path() -> None:
         os.path.expanduser("~/miniforge3"),
     ):
         envs_dir = Path(conda_root) / "envs"
-        if envs_dir.is_dir():
-            for env in envs_dir.iterdir():
+        if not envs_dir.is_dir():
+            continue
+        try:
+            # sorted() 保证顺序稳定
+            entries = sorted(envs_dir.iterdir(), key=lambda e: e.name)
+        except OSError:
+            continue
+        for env in entries:
+            try:
                 cand = env / "bin"
                 if cand.is_dir():
                     candidates.append(str(cand))
+            except OSError:
+                continue
+
+    # 4) ~/.local/bin
     candidates.append(os.path.expanduser("~/.local/bin"))
 
     cur = os.environ.get("PATH", "")
