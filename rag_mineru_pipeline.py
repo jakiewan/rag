@@ -65,7 +65,7 @@ PROJECT_ROOT = HERE.parent.parent                                       # 04-rag
 
 IMAGE_EXTS: set = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}     # 支持的图片扩展名
 
-DEFAULT_VL_MODEL = "qwen-vl-plus"                                      # 默认视觉模型
+DEFAULT_VL_MODEL = "MiniMax-M3"                                          # 默认视觉模型（MiniMax 多模态）
 
 # ---------------------------------------------------------------------------
 # 加密嵌入的 MinIO 凭据（Fernet + PBKDF2-SHA256, 100k 迭代）
@@ -135,7 +135,15 @@ class Config:
     minio_bucket: str = os.getenv("MINIO_BUCKET", "images")
     minio_secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
-    # 阿里云百炼（OpenAI 兼容）：未配置时用占位标题
+    # MiniMax 多模态（OpenAI 兼容，https://api.minimaxi.com/v1）
+    # 默认走 MiniMax-M3，用户只要 export MINIMAX_API_KEY=xxx 即可
+    minimax_base_url: str = os.getenv(
+        "MINIMAX_BASE_URL",
+        "https://api.minimaxi.com/v1",
+    )
+    minimax_api_key: str = os.getenv("MINIMAX_API_KEY", "")           # 为空时回退到 DashScope
+
+    # 阿里云百炼（OpenAI 兼容）：作为 MiniMax 不可用时的后备
     dashscope_base_url: str = os.getenv(                                # 兼容接入点
         "DASHSCOPE_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -494,16 +502,16 @@ def step3_scan_images(md_content: str, images_dir: Path) -> List[Tuple[Path, Tup
 def step4_vlm_summaries(targets: List[Tuple[Path, Tuple[str, str, str]]],
                         doc_title: str, cfg: Config) -> Dict[str, str]:
     """
-    调用阿里云百炼视觉模型为每张图片生成中文摘要。
-    若 DASHSCOPE_API_KEY 未配置或 import openai 失败，则用占位文本。
+    调用视觉模型为每张图片生成中文摘要。
+
+    优先级：
+        1. MiniMax-M3（MINIMAX_API_KEY 环境变量，国内端点 api.minimaxi.com）
+        2. 阿里云百炼 qwen-vl-plus（DASHSCOPE_API_KEY 环境变量）
+        3. 都没有则用占位文本
     """
     if cfg.skip_vlm:                                                     # 跳过
         logger.info("[Step4] 已通过 --skip-vlm 跳过 VLM。")
         return {p.name: "[skip-vlm]" for p, _ in targets}
-
-    if not cfg.dashscope_api_key:                                        # 缺凭据
-        logger.warning("[Step4] DASHSCOPE_API_KEY 未配置，使用占位标题。")
-        return {p.name: f"图片摘要-{p.stem[:8]}" for p, _ in targets}
 
     try:                                                                 # 尝试 import openai
         from openai import OpenAI                                        # 兼容客户端
@@ -511,7 +519,22 @@ def step4_vlm_summaries(targets: List[Tuple[Path, Tuple[str, str, str]]],
         logger.error("[Step4] 未安装 openai，请 pip install openai>=1.0。")
         return {p.name: f"图片摘要-{p.stem[:8]}" for p, _ in targets}
 
-    client = OpenAI(api_key=cfg.dashscope_api_key, base_url=cfg.dashscope_base_url)
+    # 决定 provider：MiniMax 优先 → DashScope 兜底
+    if cfg.minimax_api_key:                                              # 优先 MiniMax
+        provider = "MiniMax"
+        client = OpenAI(api_key=cfg.minimax_api_key, base_url=cfg.minimax_base_url)
+        model_name = os.getenv("VL_MODEL", DEFAULT_VL_MODEL)
+    elif cfg.dashscope_api_key:                                          # 兜底 DashScope
+        provider = "DashScope"
+        client = OpenAI(api_key=cfg.dashscope_api_key, base_url=cfg.dashscope_base_url)
+        model_name = cfg.vl_model
+    else:                                                                # 都没配
+        logger.warning(
+            "[Step4] MINIMAX_API_KEY / DASHSCOPE_API_KEY 均未配置，使用占位标题。"
+        )
+        return {p.name: f"图片摘要-{p.stem[:8]}" for p, _ in targets}
+
+    logger.info("[Step4] 使用 provider=%s model=%s", provider, model_name)
     out: Dict[str, str] = {}
     for img_path, (heading, pre, post) in targets:                       # 遍历
         try:
@@ -531,7 +554,7 @@ def step4_vlm_summaries(targets: List[Tuple[Path, Tuple[str, str, str]]],
             )
 
             resp = client.chat.completions.create(                       # 调模型
-                model=cfg.vl_model,
+                model=model_name,
                 messages=[{"role": "user", "content": [
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": data_uri}},
