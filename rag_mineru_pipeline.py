@@ -563,6 +563,11 @@ def step4_vlm_summaries(targets: List[Tuple[Path, Tuple[str, str, str]]],
                 temperature=0.3,
             )
             summary = (resp.choices[0].message.content or "").strip().replace("\n", " ")
+            # MiniMax-M3 / DeepSeek 等模型默认会带 <think>...</think> 思考块，剥掉
+            summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
+            # 截短到一句话（最多 60 字）
+            if len(summary) > 60:
+                summary = summary[:60].rstrip("，。、,. ") + "…"
             out[img_path.name] = summary or f"图片摘要-{img_path.stem[:8]}"
             logger.info("[Step4] %s -> %s", img_path.name, out[img_path.name])
         except Exception as e:                                           # 单图失败不影响整体
