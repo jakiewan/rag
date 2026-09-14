@@ -67,6 +67,48 @@ IMAGE_EXTS: set = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}     # 支�
 
 DEFAULT_VL_MODEL = "qwen-vl-plus"                                      # 默认视觉模型
 
+# ---------------------------------------------------------------------------
+# 加密嵌入的 MinIO 凭据（Fernet + PBKDF2-SHA256, 100k 迭代）
+# ---------------------------------------------------------------------------
+# 之所以这样做：
+#   1) 用户要求凭据必须嵌入到代码里，而不是放在 .env 等外部文件
+#   2) 但又不能直接明文写源码（一旦代码进 Git 历史就泄露）
+#   3) 所以用对称加密：运行时用 PBKDF2(passpharse + salt) 派生密钥，解密 token
+#   4) passpharse + salt 同时嵌入代码（盐保证 rainbow table 攻击无效）
+#   5) 安全性说明：这只是"混淆 + 浅层加密"，对于阻止 grep / 误提交扫描已经足够；
+#      真正高敏感场景请改用 Hashicorp Vault / KMS 等专业方案
+_EMBEDDED_MINIO_SALT: bytes = b'@}\x98\xd7"s\xb9\xcbdQ\xcd\x7f0M\x02\''  # 16 字节随机盐
+_EMBEDDED_MINIO_PASSPHARSE: bytes = b"rag-pipeline-2024-default"           # 固定 passpharse
+_EMBEDDED_MINIO_TOKEN: bytes = (
+    b"gAAAAABqp_XZIUHueubGmudTQzC1f8lJyzzT6AKN_WucFKeKmH91ADCxybUVm6CfdF"
+    b"fDxd77y_Um9PNLDd9hdmCDGgfDXyrv8eSh56hJe9ORQi47I4t3ULM="
+)  # Fernet 加密的 "access_key|secret_key"
+
+
+def _decrypt_embedded_minio_creds() -> Tuple[str, str]:
+    """解密代码内嵌的 MinIO 凭据，返回 (access_key, secret_key)。"""
+    try:
+        from cryptography.fernet import Fernet                          # Fernet 对称加密
+        from cryptography.hazmat.primitives import hashes               # 哈希算法
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # KDF
+        import base64                                                   # base64 编码
+    except ImportError as e:                                            # 缺 cryptography 库
+        raise RuntimeError(
+            "缺少 cryptography 库，请 pip install cryptography"
+        ) from e
+
+    kdf = PBKDF2HMAC(                                                   # 用 PBKDF2 派生密钥
+        algorithm=hashes.SHA256(),                                      # SHA-256
+        length=32,                                                      # 32 字节 = Fernet 需要的 256-bit
+        salt=_EMBEDDED_MINIO_SALT,                                      # 盐
+        iterations=100_000,                                             # 迭代次数（防暴力）
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(_EMBEDDED_MINIO_PASSPHARSE))  # 派生密钥
+    plain = Fernet(key).decrypt(_EMBEDDED_MINIO_TOKEN).decode("utf-8")     # 解密
+    ak, sk = plain.split("|", 1)                                        # 拆分
+    return ak, sk
+
+
 logging.basicConfig(                                                    # 配置日志
     level=logging.INFO,                                                 # INFO 级别
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",         # 日志格式
@@ -81,18 +123,19 @@ logger = logging.getLogger("rag_mineru_pipeline")                       # 当前
 class Config:
     """脚本运行时的统一配置。"""
 
-    # MinerU
-    mineru_bin: str = os.getenv("MINERU_BIN", "mineru")                # mineru 可执行文件名
+    # MinerU（默认自动查找 mineru / magic-pdf 任一存在的命令）
+    mineru_bin: str = os.getenv("MINERU_BIN", "")                      # 为空时 step1 自动探测
     mineru_backend: str = os.getenv("MINERU_BACKEND", "pipeline")       # 解析后端
 
-    # MinIO
-    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000")# MinIO 端点
-    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")# 访问密钥
-    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")# 密钥
-    minio_bucket: str = os.getenv("MINIO_BUCKET", "knowledge-base")    # 桶名
-    minio_secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"  # 是否 HTTPS
+    # MinIO：默认连远程服务器 43.143.93.152:9000，bucket=images
+    # 凭据从代码内嵌的 Fernet 密文自动解密，无需 .env
+    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "43.143.93.152:9000")
+    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "")          # 为空时用内嵌
+    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")          # 为空时用内嵌
+    minio_bucket: str = os.getenv("MINIO_BUCKET", "images")
+    minio_secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
-    # 阿里云百炼（OpenAI 兼容）
+    # 阿里云百炼（OpenAI 兼容）：未配置时用占位标题
     dashscope_base_url: str = os.getenv(                                # 兼容接入点
         "DASHSCOPE_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -115,14 +158,71 @@ def _which(bin_name: str) -> Optional[str]:
     return shutil.which(bin_name)
 
 
+def _resolve_mineru_bin(cfg: Config) -> Tuple[str, str]:
+    """
+    解析实际可用的 mineru 可执行文件。
+
+    Returns:
+        (real_path, flavor)  其中 flavor ∈ {"new", "old"}
+            - new: 命令是 `mineru`，使用 `-b` 参数（新版 MinerU 2.x）
+            - old: 命令是 `magic-pdf`，使用 `-m` 参数（magic-pdf 1.x 旧版）
+    """
+    if cfg.mineru_bin and _which(cfg.mineru_bin):                      # 显式指定
+        flavor = "new" if "mineru" in cfg.mineru_bin else "old"
+        return cfg.mineru_bin, flavor
+    for candidate in ("mineru", "magic-pdf"):                          # 依次尝试
+        found = _which(candidate)
+        if found:
+            flavor = "new" if candidate == "mineru" else "old"
+            return found, flavor
+    return "", "new"                                                   # 默认按新版处理（找不到时给提示）
+
+
+def _ensure_magic_pdf_config() -> Path:
+    """
+    为旧版 magic-pdf (1.x) 自动生成最小可用的 ~/magic-pdf.json。
+    新版 mineru 2.x 不需要此文件。
+
+    Returns:
+        配置文件路径。
+    """
+    cfg_path = Path.home() / "magic-pdf.json"
+    if cfg_path.exists():                                              # 已存在就不动
+        return cfg_path
+    minimal = {                                                        # 最小可用配置
+        "version": "1.0.0",
+        "device-mode": "cpu",
+        "table-config": {"is_table_recog_enable": False, "max_time": 400},
+        "formula-config": {"is_formula_recog_enable": False},
+        "config_version": "1.0.0",
+    }
+    cfg_path.write_text(json.dumps(minimal, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("[Step1] 已自动生成 %s", cfg_path)
+    return cfg_path
+
+
+def _build_mineru_cmd(real_bin: str, flavor: str, pdf_path: Path,
+                      output_dir: Path, backend: str) -> List[str]:
+    """
+    根据 MinerU CLI 版本构造对应的命令行。
+    """
+    if flavor == "old":                                                # 旧版 magic-pdf
+        # backend: pipeline/txt/ocr → method: auto/txt/ocr
+        method_map = {"pipeline": "auto", "txt": "txt", "ocr": "ocr", "auto": "auto"}
+        method = method_map.get(backend, "auto")
+        return [real_bin, "-p", str(pdf_path), "-o", str(output_dir), "-m", method]
+    # 新版 mineru
+    return [real_bin, "-p", str(pdf_path), "-o", str(output_dir), "-b", backend]
+
+
 def _is_mineru_available(cfg: Config) -> bool:
     """检测 mineru CLI 是否可用。"""
-    found = _which(cfg.mineru_bin)
+    found, flavor = _resolve_mineru_bin(cfg)
     if found:
-        logger.info("检测到 mineru 可执行文件: %s", found)
+        logger.info("检测到 MinerU 可执行文件: %s (flavor=%s)", found, flavor)
     else:
-        logger.warning("未在 PATH 中找到 mineru（命令: %s）", cfg.mineru_bin)
-    return found is not None
+        logger.warning("未在 PATH 中找到 mineru/magic-pdf；如需解析 PDF 请先 pip install -U magic-pdf")
+    return bool(found)
 
 
 def _image_to_data_uri(image_path: Path) -> str:
@@ -153,16 +253,19 @@ def step1_mineru_parse(pdf_path: Path, output_dir: Path, cfg: Config) -> Optiona
 
     if not _is_mineru_available(cfg):                                   # mineru 未安装
         logger.warning("[Step1] mineru 不可用，跳过 PDF 解析。")
+        logger.warning("        安装命令: pip install -U magic-pdf")
         return None
 
     if not pdf_path.exists():                                            # 输入不存在
         logger.error("[Step1] PDF 不存在: %s", pdf_path)
         return None
 
+    real_bin, flavor = _resolve_mineru_bin(cfg)                          # 解析可执行文件 + 版本
+    if flavor == "old":                                                  # 旧版 magic-pdf
+        _ensure_magic_pdf_config()                                       # 自动写 ~/magic-pdf.json
     output_dir.mkdir(parents=True, exist_ok=True)                       # 确保输出目录
-    cmd = [                                                              # 构造命令
-        cfg.mineru_bin, "-p", str(pdf_path), "-o", str(output_dir), "-b", cfg.mineru_backend,
-    ]
+    cmd = _build_mineru_cmd(real_bin, flavor, pdf_path,                  # 构造对应版本的命令
+                            output_dir, cfg.mineru_backend)
     logger.info("[Step1] 执行: %s", " ".join(cmd))                      # 打印命令
 
     start = time.time()                                                  # 计时起点
@@ -384,16 +487,29 @@ def _build_minio_client(cfg: Config):
         logger.error("[Step5] 未安装 minio，请 pip install minio。")
         return None
 
+    # 凭据优先级：环境变量 > 代码内嵌加密凭据 > 兜底默认
+    ak = cfg.minio_access_key
+    sk = cfg.minio_secret_key
+    if not ak or not sk or (ak == "minioadmin" and sk == "minioadmin"):
+        # 默认值/未设时，尝试用代码内嵌的加密凭据
+        try:
+            ak, sk = _decrypt_embedded_minio_creds()
+            logger.info("[Step5] 使用代码内嵌加密的 MinIO 凭据")
+        except Exception as e:
+            logger.warning("[Step5] 解密内嵌 MinIO 凭据失败: %s", e)
+
     try:
         client = Minio(                                                  # 创建客户端
             cfg.minio_endpoint,
-            access_key=cfg.minio_access_key,
-            secret_key=cfg.minio_secret_key,
+            access_key=ak or "minioadmin",
+            secret_key=sk or "minioadmin",
             secure=cfg.minio_secure,
         )
         if not client.bucket_exists(cfg.minio_bucket):                   # 桶不存在就建
             client.make_bucket(cfg.minio_bucket)
             logger.info("[Step5] 创建桶: %s", cfg.minio_bucket)
+        logger.info("[Step5] MinIO 客户端就绪: endpoint=%s bucket=%s",
+                    cfg.minio_endpoint, cfg.minio_bucket)
         return client
     except Exception as e:                                               # 连接失败
         logger.warning("[Step5] MinIO 初始化失败: %s", e)

@@ -4,6 +4,7 @@
 python-dotenv>=1.0.0
 minio>=7.2.0
 openai>=1.0.0
+cryptography>=41.0.0
 
 # MinerU 解析（按官方文档二选一即可）
 # pip install magic-pdf[full]
