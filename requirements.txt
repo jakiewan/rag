@@ -1,0 +1,14 @@
+# 整合脚本依赖
+# 安装: pip install -r requirements.txt
+
+python-dotenv>=1.0.0
+minio>=7.2.0
+openai>=1.0.0
+
+# MinerU 解析（按官方文档二选一即可）
+# pip install magic-pdf[full]
+magic-pdf>=1.0.0
+
+# LangChain（仅在调用 loaders 时需要，本脚本不直接依赖）
+# langchain-community>=0.2.0
+# unstructured>=0.15.0

@@ -1,0 +1,26 @@
+# 敏感配置
+.env
+.env.*
+!.env.example
+
+# 运行时产物
+result/
+__pycache__/
+*.pyc
+.DS_Store
+.history/
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# 常见二进制
+*.pdf
+*.docx
+*.xlsx
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.webp
