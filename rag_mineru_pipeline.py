@@ -508,8 +508,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
             logger.info("[入口] mock 模式或 --skip-mineru，跳过 PDF 解析，请用 --md 指定。")
             return 1
     else:
-        # 默认复用父级已有的 mineru 产物
-        default_md = PROJECT_ROOT / "result" / "sample" / "auto" / "sample.md"
+        # 默认使用 rag 目录自带的 mineru 产物（自包含，不依赖父级）
+        default_md = HERE / "result" / "sample" / "auto" / "sample.md"
         if default_md.exists():
             md_path = default_md
             logger.info("[入口] 使用默认 MD: %s", md_path)

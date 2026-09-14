@@ -89,15 +89,25 @@ RAG（Retrieval-Augmented Generation，检索增强生成）= **"外挂知识库
 
 ## 二、MinerU + VLM + MinIO 实现（一个 py 文件）
 
-### 2.1 文件清单
+### 2.1 文件清单（目录自包含，零外部依赖）
 
 ```
 0914work/rag/
-├── rag_mineru_pipeline.py     # 整合主程序（≈460 行）
-├── .env.example               # 环境变量模板（不含真实密钥）
+├── rag_mineru_pipeline.py     # 整合主程序（≈570 行）
+├── README.md                  # 本文件
 ├── requirements.txt           # 依赖
+├── .env.example               # 环境变量模板（不含真实密钥）
 ├── .gitignore                 # 排除 .env / result / 临时文件
-└── README.md                  # 本文件
+├── knowledge_base/            # 知识库样本（与 01 一致）
+│   ├── sample.pdf             # 待解析 PDF
+│   ├── sample.txt             # 文本样本
+│   └── sample.docx            # Word 样本
+└── result/                    # MinerU 解析产物 + 流水线输出
+    └── sample/auto/
+        ├── sample.md          # 解析后的 Markdown（含图片本地引用）
+        ├── sample_new.md      # 流水线输出：链接已替换为 MinIO 远端 URL
+        ├── sample_summary.json# 流水线输出：VLM 摘要 + 远端 URL 映射
+        └── images/            # 21 张 PDF 抽取出的原始图片
 ```
 
 ### 2.2 快速开始
@@ -109,14 +119,14 @@ pip install -r requirements.txt
 # 2) 复制环境变量模板，按需填写（不写也能跑，会用占位文本）
 cp .env.example .env
 
-# 3) 一键跑通（默认复用 ../result/sample/auto/sample.md）
+# 3) 一键跑通（默认使用 ./result/sample/auto/sample.md，目录自包含）
 python3 rag_mineru_pipeline.py
 
 # 4) 显式指定 MD 路径
-python3 rag_mineru_pipeline.py --md ../result/sample/auto/sample.md
+python3 rag_mineru_pipeline.py --md ./result/sample/auto/sample.md
 
 # 5) 从 PDF 重新解析（需要先装 MinerU）
-python3 rag_mineru_pipeline.py --pdf ../knowledge_base/sample.pdf
+python3 rag_mineru_pipeline.py --pdf ./knowledge_base/sample.pdf
 
 # 6) mock 模式：只跑占位逻辑，不连任何外部服务
 python3 rag_mineru_pipeline.py --mode mock
