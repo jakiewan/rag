@@ -24,3 +24,6 @@ __pycache__/
 *.gif
 *.bmp
 *.webp
+
+# 例外：自带的示例 PDF 是 clone 后直接跑全流程的必需资源
+!knowledge_base/sample.pdf
