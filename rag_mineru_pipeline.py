@@ -158,6 +158,49 @@ def _which(bin_name: str) -> Optional[str]:
     return shutil.which(bin_name)
 
 
+def _bootstrap_path() -> None:
+    """
+    把常见 conda/venv/user bin 加入 PATH，让 `mineru` / `magic-pdf` 在不显式
+    `conda activate` 的情况下也能被找到。新机器 clone 后直接跑 `python3` 时
+    这一步尤其关键：mineru 通常装在 conda env 的 bin 里，未激活 env 时
+    PATH 里看不到，会被脚本误判为"mineru 不可用"。
+
+    探测顺序（找到的都会加入 PATH 前缀）：
+        1. 当前 conda env（$CONDA_PREFIX/bin，conda activate 后自动设）
+        2. 常见 anaconda/miniconda/miniforge 根目录下的 envs/*/bin
+        3. ~/.local/bin（pip install --user 默认位置）
+    """
+    candidates: List[str] = []
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidates.append(str(Path(conda_prefix) / "bin"))
+    for conda_root in (
+        "/opt/anaconda3", "/usr/local/anaconda3",
+        os.path.expanduser("~/anaconda3"),
+        os.path.expanduser("~/miniconda3"),
+        os.path.expanduser("~/miniforge3"),
+    ):
+        envs_dir = Path(conda_root) / "envs"
+        if envs_dir.is_dir():
+            for env in envs_dir.iterdir():
+                cand = env / "bin"
+                if cand.is_dir():
+                    candidates.append(str(cand))
+    candidates.append(os.path.expanduser("~/.local/bin"))
+
+    cur = os.environ.get("PATH", "")
+    cur_parts = cur.split(":") if cur else []
+    added: List[str] = []
+    seen = set(cur_parts)
+    for p in candidates:
+        if p and p not in seen and Path(p).is_dir():
+            added.append(p)
+            seen.add(p)
+    if added:
+        os.environ["PATH"] = ":".join(added + cur_parts)
+        logger.info("[PATH bootstrap] 已加入候选 bin 目录: %s", ", ".join(added))
+
+
 def _resolve_mineru_bin(cfg: Config) -> Tuple[str, str]:
     """
     解析实际可用的 mineru 可执行文件。
@@ -686,4 +729,5 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    _bootstrap_path()                                                  # 先把 conda/venv bin 加进 PATH
     sys.exit(run_pipeline(parse_args()))
