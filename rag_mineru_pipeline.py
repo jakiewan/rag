@@ -559,10 +559,17 @@ def step4_vlm_summaries(targets: List[Tuple[Path, Tuple[str, str, str]]],
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": data_uri}},
                 ]}],
-                max_tokens=100,
+                max_tokens=1024,                                          # 留足给推理 + 正文
                 temperature=0.3,
+                extra_body={"thinking": {"type": "disabled"}},           # MiniMax-M3 关推理模式
             )
-            summary = (resp.choices[0].message.content or "").strip().replace("\n", " ")
+            msg = resp.choices[0].message
+            raw_content = (msg.content or "").strip().replace("\n", " ")
+            # MiniMax-M3 推理模型有时只输出 <think>，正文放 reasoning_content
+            if not raw_content and getattr(msg, "reasoning_content", None):
+                raw_content = msg.reasoning_content.strip().replace("\n", " ")
+                logger.info("[Step4] %s 正文取自 reasoning_content", img_path.name)
+            summary = raw_content
             # MiniMax-M3 / DeepSeek 等模型默认会带 <think>...</think> 思考块，剥掉
             summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
             # 截短到一句话（最多 60 字）
