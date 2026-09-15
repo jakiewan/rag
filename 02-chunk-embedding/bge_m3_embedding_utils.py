@@ -69,6 +69,12 @@ def to_milvus_sparse(sparse: Dict[int, float]) -> Dict[int, float]:
     return sparse
 
 
+def load_sparse_from_json(sparse_strkeys: Dict[str, float]) -> Dict[int, float]:
+    """JSON 反序列化后 key 是 str，这里转回 int 喂给 Milvus。"""
+    d = {int(k): float(v) for k, v in sparse_strkeys.items()}
+    return to_milvus_sparse(d)
+
+
 if __name__ == "__main__":
     r = generate_hybrid_embedding(["hello world", "你好世界"])
     print(f"稠密维度: {len(r['dense'][0])} | 稀疏非零项: {[len(s) for s in r['sparse']]}")

@@ -123,18 +123,21 @@ def _split_section(section: dict) -> List[dict]:
 def _merge_short(chunks: List[dict]) -> List[dict]:
     """合并同 parent 下 < MIN_LEN 的相邻短块；表格不参与；
     被合并的章节标题进 body 作为内部分隔符（不丢标题）；
-    合并后总长 > MAX_LEN*1.5 不合并。"""
+    合并后总长 > MAX_LEN 强制不合并（保证非表格 chunk ≤ MAX_LEN）。
+    表格前的短文本**仅当该短文本是表格所在 H2 节的开头**时才并入表格（防语义错位）。"""
     if not chunks:
         return []
 
-    # 表格前的短文本并入表格（前文标题写入 body）
+    # 表格前的短文本并入表格：仅当短文本的 title == 表格的 parent_title
+    # （即短文本是该 H2 节的引言/说明，不是上一节的尾部）
     buf, i = [], 0
     while i < len(chunks):
         c = chunks[i]
         if (i + 1 < len(chunks)
             and chunks[i + 1]["has_table"]
             and not c["has_table"]
-            and len(c["body"]) < MIN_LEN):
+            and len(c["body"]) < MIN_LEN
+            and chunks[i + 1]["parent_title"] == c["title"]):
             t = chunks[i + 1]
             t["body"] = (c["title"] + "\n\n" + c["body"] + "\n\n" + t["body"]).strip()
             buf.append(t)
@@ -143,19 +146,63 @@ def _merge_short(chunks: List[dict]) -> List[dict]:
             buf.append(c)
             i += 1
 
-    # 同 parent 短块合并，被合并的标题写进 body
+    # 同 parent 短块合并，被合并的标题写进 body；总长严格 ≤ MAX_LEN
+    # **两侧标题都写进 body**：merged[-1]（被吞）写最前，c（吞人者）写在中间分隔，
+    # 防止空标题 chunk（如 # 附表：... 后面紧跟 ## 项目绩效目标表）被静默吞掉。
     merged = [buf[0]]
     for c in buf[1:]:
         if (not merged[-1]["has_table"]
             and not c["has_table"]
             and merged[-1]["parent_title"] == c["parent_title"]
             and len(merged[-1]["body"]) < MIN_LEN):
-            new_body = (merged[-1]["body"] + "\n\n" + c["title"] + "\n\n" + c["body"]).strip()
-            if len(new_body) + len(merged[-1]["title"]) <= MAX_LEN * 1.5:
+            new_body = (
+                merged[-1]["title"] + "\n\n"
+                + merged[-1]["body"] + "\n\n"
+                + c["title"] + "\n\n"
+                + c["body"]
+            ).strip()
+            if len(new_body) + len(c["title"]) <= MAX_LEN:
                 merged[-1]["body"] = new_body
                 continue
         merged.append(c)
-    return merged
+
+    # 纯骨架 chunk（title+body < 100 字符）→ 合并到相邻表格，**包含 final 末尾的连续骨架**
+    # 阈值 < 100：放过 `## 关于X说明` 类 len=133+ 的真实短说明
+    final, i = [], 0
+    while i < len(merged):
+        c = merged[i]
+        if not c["has_table"] and len(c["title"]) + len(c["body"]) < 100:
+            # 向后追溯 final 末尾的连续骨架（含 c 自身）
+            skeleton = [c]
+            j = len(final) - 1
+            while (j >= 0
+                   and not final[j]["has_table"]
+                   and len(final[j]["title"]) + len(final[j]["body"]) < 100):
+                skeleton.insert(0, final[j])
+                j -= 1
+
+            skeleton_text = "\n\n".join(
+                s["title"] + ("\n\n" + s["body"] if s["body"] else "")
+                for s in skeleton
+            ).strip()
+
+            if j >= 0 and final[j]["has_table"]:
+                final[j]["body"] = (skeleton_text + "\n\n" + final[j]["body"]).strip()
+                final = final[:j + 1]
+                i += 1
+                continue
+            if i + 1 < len(merged) and merged[i + 1].get("has_table"):
+                merged[i + 1]["body"] = (skeleton_text + "\n\n" + merged[i + 1]["body"]).strip()
+                final.append(merged[i + 1])
+                i += 2
+                continue
+            # 既没上一个表格，也没下一个表格：把 skeleton 全部放回 final（独立保留）
+            final.extend(skeleton)
+            i += 1
+            continue
+        final.append(c)
+        i += 1
+    return final
 
 
 def _assemble(sections: List[dict]) -> List[dict]:
