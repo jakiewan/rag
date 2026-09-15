@@ -1,0 +1,25 @@
+{
+  "changelists": [
+    {
+      "name": "Default",
+      "files": [
+        ".idea/.gitignore",
+        ".vscode/changelists.json",
+        "bge_m3_utils.py",
+        "rag_mineru_pipeline.py",
+        "01-load/bge_m3_utils.py",
+        "01-load/rag_mineru_pipeline.py",
+        "\"02-chunk-embedding/\\346\\226\\207\\346\\241\\243\\345\\210\\207\\345\\235\\227.ipynb\"",
+        "02-chunk-embedding/chunk-embbdding.ipynb",
+        ".env.example",
+        ".gitignore",
+        "\"day01-RAG \\345\\216\\237\\347\\220\\206\\344\\273\\213\\347\\273\\215(\\344\\270\\200).pdf\"",
+        "\"day01-\\346\\226\\207\\346\\241\\243\\345\\212\\240\\350\\275\\275\\357\\274\\210\\344\\272\\214\\357\\274\\211.pdf\"",
+        "\"day02-\\346\\226\\207\\346\\234\\254\\345\\210\\207\\345\\210\\206\\345\\222\\214\\345\\220\\221\\351\\207\\217\\345\\255\\230\\345\\202\\250.pdf\"",
+        "02-chunk-embedding/bge_m3_embedding_utils.py",
+        "02-chunk-embedding/md_splitter.py"
+      ]
+    }
+  ],
+  "active": "Default"
+}

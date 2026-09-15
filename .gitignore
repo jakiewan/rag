@@ -3,8 +3,8 @@
 .env.*
 !.env.example
 
-# 运行时产物
-result/
+# 运行时产物（01-load 中间产物，可由 MinerU 重新跑出来）
+01-load/result/
 __pycache__/
 *.pyc
 .DS_Store
@@ -13,17 +13,3 @@ __pycache__/
 # 日志与临时文件
 *.log
 *.tmp
-
-# 常见二进制
-*.pdf
-*.docx
-*.xlsx
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.webp
-
-# 例外：自带的示例 PDF 是 clone 后直接跑全流程的必需资源
-!knowledge_base/sample.pdf
